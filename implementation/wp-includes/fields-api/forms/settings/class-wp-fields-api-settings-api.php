@@ -43,6 +43,9 @@ class WP_Fields_API_Settings_API {
 			$section_id = $section->id;
 			$section_title = $section->label;
 
+			// Remove our namespace
+			$setting_page_id = str_replace( 'settings-', '', $form_id );
+
 			if ( ! $section->display_label ) {
 				$section_title = '';
 			}
@@ -69,7 +72,7 @@ class WP_Fields_API_Settings_API {
 							$section_id,
 							$section_title,
 							array( $section, 'render_description' ),
-							$form_id
+							$setting_page_id
 						);
 
 						$added_section = true;
@@ -85,19 +88,27 @@ class WP_Fields_API_Settings_API {
 						'control'    => $control,
 					);
 
+					$control_label   = $control->label;
+					$render_callback = array( $this, 'render_control' );
+
+					if ( 'hidden' === $control->type ) {
+						$control_label   = null;
+						$render_callback = '__return_null';
+					}
+
 					// Add Settings API field
 					add_settings_field(
 						$field_id,
-						$control->label,
-						array( $this, 'render_control' ),
-						$form_id,
+						$control_label,
+						$render_callback,
+						$setting_page_id,
 						$section_id,
 						$settings_args
 					);
 
 					// Register Setting
 					register_setting(
-						$form_id,
+						$setting_page_id,
 						$field_id,
 						$sanitize_callback
 					);
@@ -123,10 +134,6 @@ class WP_Fields_API_Settings_API {
 		 * @var $control WP_Fields_API_Control
 		 */
 		$control = $settings_args['control'];
-
-		if ( ! $control->check_capabilities() ) {
-			return;
-		}
 
 		$description = trim( $control->description );
 

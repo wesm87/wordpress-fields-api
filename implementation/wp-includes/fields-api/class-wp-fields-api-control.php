@@ -55,6 +55,14 @@ class WP_Fields_API_Control extends WP_Fields_API_Container {
 	public $type = 'text';
 
 	/**
+	 * Datasource type for control
+	 *
+	 * @access public
+	 * @var string
+	 */
+	public $datasource;
+
+	/**
 	 * Choices callback
 	 *
 	 * @access public
@@ -66,6 +74,12 @@ class WP_Fields_API_Control extends WP_Fields_API_Container {
 	 */
 	public $choices_callback = null;
 
+	/**
+	 * List of control types that have had their templates printed to screen
+	 *
+	 * @access private
+	 * @var array
+	 */
 	private static $printed_templates = array();
 
 	/**
@@ -84,18 +98,63 @@ class WP_Fields_API_Control extends WP_Fields_API_Container {
 
 		parent::init( $object_type, $id, $args );
 
-		// Setup field
+		// Set field based on control id, if not explicitly set
 		if ( ! $this->field ) {
 			$this->field = $id;
 		}
 
-		if ( $this->field ) {
-			$field = $wp_fields->get_field( $this->object_type, $this->field, $this->object_name );
+		// Setup datasource
+		if ( $this->datasource ) {
+			$datasource_type = null;
+			$datasource_args = null;
 
-			if ( $field ) {
-				$this->add_child( $field );
+			if ( is_string( $this->datasource ) ) {
+				$datasource_type = $this->datasource;
+			} else {
+				$datasource_args = $this->datasource;
 			}
+
+			$this->datasource = $wp_fields->setup_datasource( $datasource_type, $datasource_args );
 		}
+
+	}
+
+	/**
+	 * Get associated datasource
+	 *
+	 * @return null|WP_Fields_API_Datasource
+	 */
+	public function get_datasource() {
+
+		/**
+		 * @var $wp_fields WP_Fields_API
+		 */
+		global $wp_fields;
+
+		$datasources = $this->get_children( 'datasource' );
+
+		$datasource = null;
+
+		if ( ! $datasources && $this->datasource ) {
+			$datasource_type = null;
+			$datasource_args = null;
+
+			if ( is_string( $this->datasource ) ) {
+				$datasource_type = $this->datasource;
+			} else {
+				$datasource_args = $this->datasource;
+			}
+
+			$datasource = $wp_fields->setup_datasource( $datasource_type, $datasource_args );
+
+			if ( $datasource ) {
+				$this->add_child( $datasource, 'datasource' );
+			}
+		} elseif ( $datasources ) {
+			$datasource = current( $datasources );
+		}
+
+		return $datasource;
 
 	}
 
@@ -136,11 +195,22 @@ class WP_Fields_API_Control extends WP_Fields_API_Container {
 	 */
 	public function get_field() {
 
+		/**
+		 * @var $wp_fields WP_Fields_API
+		 */
+		global $wp_fields;
+
 		$fields = $this->get_children( 'field' );
 
 		$field = null;
 
-		if ( $fields ) {
+		if ( ! $fields && $this->field ) {
+			$field = $wp_fields->get_field( $this->object_type, $this->field, $this->object_name );
+
+			if ( $field ) {
+				$this->add_child( $field, 'field' );
+			}
+		} elseif ( $fields ) {
 			$field = current( $fields );
 		}
 
@@ -195,7 +265,18 @@ class WP_Fields_API_Control extends WP_Fields_API_Container {
 	 */
 	public function choices() {
 
-		return array();
+		$data = array();
+
+		// If control has a datasource, use it for getting the data
+		if ( $this->datasource ) {
+			// Get datasource
+			$datasource = $this->get_datasource();
+
+			// Get data from datasource
+			$data = $datasource->get_data( array(), $this );
+		}
+
+		return $data;
 
 	}
 
@@ -223,12 +304,16 @@ class WP_Fields_API_Control extends WP_Fields_API_Container {
 	 */
 	final public function value() {
 
-		$field = $this->get_field();
-
 		$value = null;
 
-		if ( $field ) {
-			$value = $field->value( $this->get_item_id() );
+		if ( null !== $this->value_override ) {
+			$value = $this->value_override;
+		} else {
+			$field = $this->get_field();
+
+			if ( $field ) {
+				$value = $field->value( $this->get_item_id() );
+			}
 		}
 
 		return $value;
@@ -262,11 +347,34 @@ class WP_Fields_API_Control extends WP_Fields_API_Container {
 	 */
 	protected function render() {
 
-		$id    = 'fields-control-' . str_replace( '[', '-', str_replace( ']', '', $this->id ) );
-		$class = 'fields-control fields-control-' . $this->type;
+		$attrs = array(
+			'id'    => 'fields-control-' . str_replace( '[', '-', str_replace( ']', '', $this->id ) ),
+			'class' => 'fields-control fields-control-' . $this->type,
+		);
+
+		$input_attrs = $this->get_input_attrs();
+
+		$attrs['data-fields-type']       = $this->type;
+		$attrs['data-fields-input-name'] = $input_attrs['name'];
 		?>
-			<div id="<?php echo esc_attr( $id ); ?>" class="<?php echo esc_attr( $class ); ?>">
-				<?php $this->render_content(); ?>
+			<div <?php $this->render_attrs( $attrs ); ?>>
+				<?php
+					$render_control = true;
+
+					// Check if datasource will override control rendering
+					if ( $this->datasource ) {
+						$datasource = $this->get_datasource();
+
+						if ( true === $datasource->render_control( $this ) ) {
+							$render_control = false;
+						}
+					}
+
+					// Check if we need to render this control
+					if ( $render_control ) {
+						$this->render_content();
+					}
+				?>
 			</div>
 		<?php
 
@@ -277,8 +385,7 @@ class WP_Fields_API_Control extends WP_Fields_API_Container {
 	 *
 	 * Allows the content to be overridden without having to rewrite the wrapper in $this->render().
 	 *
-	 * Supports basic input types `text`, `checkbox`, `textarea`, `radio`, `select` and `dropdown-pages`.
-	 * Additional input types such as `email`, `url`, `number`, `hidden` and `date` are supported implicitly.
+	 * Supports input types such as `text`, `email`, `url`, `number`, `hidden` and `date` implicitly.
 	 *
 	 * Control content can alternately be rendered in JS. See {@see WP_Fields_API_Control::print_template()}.
 	 */
@@ -317,11 +424,12 @@ class WP_Fields_API_Control extends WP_Fields_API_Container {
 	}
 
 	/**
-	 * Render the custom attributes for the control's input element.
+	 * Get the input attributes for the control's input element.
 	 *
 	 * @access public
+	 * @return array
 	 */
-	public function input_attrs() {
+	public function get_input_attrs() {
 
 		// Setup field id / name
 		if ( ! isset( $this->input_attrs['id'] ) ) {
@@ -338,7 +446,40 @@ class WP_Fields_API_Control extends WP_Fields_API_Container {
 			$this->input_attrs['name'] = $input_name;
 		}
 
-		$this->render_attrs( $this->input_attrs );
+		return $this->input_attrs;
+
+	}
+
+	/**
+	 * Render the custom attributes for the control's input element.
+	 *
+	 * @access public
+	 */
+	public function input_attrs() {
+
+		$this->render_attrs( $this->get_input_attrs() );
+
+	}
+
+	/**
+	 * Get the custom attributes for the control's wrapper element.
+	 *
+	 * @access public
+	 * @return array
+	 */
+	public function get_wrap_attrs() {
+
+		if ( ! isset( $this->wrap_attrs['class'] ) || false === strpos( $this->wrap_attrs['class'], 'fields-api-control' ) ) {
+			$classes = 'form-field ' . $this->object_type . '-' . $this->id . '-wrap field-' . $this->id . '-wrap fields-api-control';
+
+			if ( isset( $this->wrap_attrs['class'] ) ) {
+				$classes .= ' ' . $this->wrap_attrs['class'];
+			}
+
+			$this->wrap_attrs['class'] = $classes;
+		}
+
+		return $this->wrap_attrs;
 
 	}
 
@@ -349,15 +490,17 @@ class WP_Fields_API_Control extends WP_Fields_API_Container {
 	 */
 	public function wrap_attrs() {
 
-		$classes = 'form-field ' . $this->object_type . '-' . $this->id . '-wrap field-' . $this->id . '-wrap fields-api-control';
+		$this->render_attrs( $this->get_wrap_attrs() );
 
-		if ( isset( $this->wrap_attrs['class'] ) ) {
-			$classes .= ' ' . $this->wrap_attrs['class'];
-		}
+	}
 
-		$this->wrap_attrs['class'] = $classes;
+	/**
+	 * Enqueue scripts/styles as needed.
+	 *
+	 * @access public
+	 */
+	public function enqueue() {
 
-		$this->render_attrs( $this->wrap_attrs );
 
 	}
 
