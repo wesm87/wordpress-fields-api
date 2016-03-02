@@ -29,6 +29,25 @@ class WP_Fields_API_Form extends WP_Fields_API_Container {
 	public $default_section_type = 'table';
 
 	/**
+	 * Get all controls for sections in this container.
+	 *
+	 * @return WP_Fields_API_Control[]
+	 */
+	public function get_controls() {
+
+		$sections = $this->get_sections();
+
+		$form_controls = array();
+
+		foreach ( $sections as $section ) {
+			$form_controls = array_merge( $form_controls, $section->get_controls() );
+		}
+
+		return $form_controls;
+
+	}
+
+	/**
 	 * Register forms, sections, controls, and fields
 	 *
 	 * @param string      $object_type
@@ -78,18 +97,6 @@ class WP_Fields_API_Form extends WP_Fields_API_Container {
 
 		// None by default
 
-		// @todo Remove this when done testing
-
-		if ( ! defined( 'WP_FIELDS_API_EXAMPLES' ) || ! WP_FIELDS_API_EXAMPLES ) {
-			return;
-		}
-
-		// Include control type(s)
-		require_once( WP_FIELDS_API_DIR . 'implementation/wp-includes/fields-api/control-types/custom/class-wp-fields-api-repeater-control.php' );
-
-		// Register control type(s)
-		$wp_fields->register_control_type( 'repeater', 'WP_Fields_API_Repeater_Control' );
-
 	}
 
 	/**
@@ -125,6 +132,7 @@ class WP_Fields_API_Form extends WP_Fields_API_Container {
 			$section_args = array(
 				'label'    => __( 'Fields API Example - My Fields', 'fields-api' ),
 				'form'     => $this->id,
+				'controls' => array(),
 			);
 
 			if ( 1 < $total_examples ) {
@@ -135,8 +143,6 @@ class WP_Fields_API_Form extends WP_Fields_API_Container {
 				$section_args['type'] = 'meta-box';
 			}
 
-			$wp_fields->add_section( $this->object_type, $section_id, $this->object_name, $section_args );
-
 			// Add example for each control type
 			$control_types = array(
 				'repeater',
@@ -146,8 +152,6 @@ class WP_Fields_API_Form extends WP_Fields_API_Container {
 				'multi-checkbox',
 				'radio',
 				'select',
-				'dropdown-pages',
-				'dropdown-terms',
 				'color',
 				'media',
 				'media-file',
@@ -160,22 +164,21 @@ class WP_Fields_API_Form extends WP_Fields_API_Container {
 			);
 
 			foreach ( $control_types as $control_type ) {
-				$field_id = 'example_my_' . $x . '_' . $control_type . '_field';
-				$label    = sprintf( __( '%s Field' ), ucwords( str_replace( '-', ' ', $control_type ) ) );
-
-				$field_args = array(
+				$control_id   = $this->id . '-example_my_' . $x . '_' . $control_type . '_field';
+				$control_args = array(
 					// Add a control to the field at the same time
-					'control' => array(
-						'type'        => $control_type,
-						'id'          => $this->id . '-' . $field_id,
-						'section'     => $section_id,
-						'label'       => $label,
-						'description' => 'Example field description',
-					),
+					'type'        => $control_type,
+					'label'       => sprintf( __( '%s Field' ), ucwords( str_replace( '-', ' ', $control_type ) ) ),
+					'description' => 'Example field description',
 				);
 
+				if ( 'repeater' == $control_type ) {
+					$control_args['type']       = 'text';
+					$control_args['repeatable'] = true;
+				}
+
 				if ( in_array( $control_type, $option_types ) ) {
-					$field_args['control']['choices'] = array(
+					$control_args['choices'] = array(
 						''         => 'N/A',
 						'option-1' => 'Option 1',
 						'option-2' => 'Option 2',
@@ -185,18 +188,16 @@ class WP_Fields_API_Form extends WP_Fields_API_Container {
 					);
 
 					if ( 'multi-checkbox' == $control_type ) {
-						unset( $field_args['control']['choices'][''] );
+						unset( $control_args['choices'][''] );
 					}
 				} elseif ( 'checkbox' == $control_type ) {
-					$field_args['control']['checkbox_label'] = 'Example checkbox label';
+					$control_args['checkbox_label'] = 'Example checkbox label';
 				}
 
-				if ( 'dropdown-terms' == $control_type ) {
-					$field_args['control']['taxonomy'] = 'category';
-				}
-
-				$wp_fields->add_field( $this->object_type, $field_id, $this->object_name, $field_args );
+				$section_args['controls'][ $control_id ] = $control_args;
 			}
+
+			$wp_fields->add_section( $this->object_type, $section_id, $this->object_name, $section_args );
 		}
 
 	}
@@ -222,65 +223,87 @@ class WP_Fields_API_Form extends WP_Fields_API_Container {
 		$form_nonce = $this->object_type . '_' . $this->id . '_' . $this->item_id;
 
 		if ( ! empty( $_REQUEST['wp_fields_api_fields_save'] ) && false !== wp_verify_nonce( $_REQUEST['wp_fields_api_fields_save'], $form_nonce ) ) {
-			/**
-			 * @var $wp_fields WP_Fields_API
-			 */
-			global $wp_fields;
-
-			$controls = $wp_fields->get_controls( $this->object_type, $this->object_name );
-
 			$values = array();
 
-			foreach ( $controls as $control ) {
-				if ( empty( $control->field ) || $control->internal ) {
+			$sections = $this->get_sections();
+
+			foreach ( $sections as $section ) {
+				if ( ! $section->check_capabilities() ) {
 					continue;
 				}
 
-				// Pass $object_name into control
-				$control->object_name = $this->object_name;
+				$controls = $section->get_controls();
 
-				$field = $control->field;
+				// Get values, handle validation first
+				foreach ( $controls as $control ) {
+					if ( ! $control->check_capabilities() ) {
+						continue;
+					}
 
-				// Pass $object_name into field
-				$field->object_name = $this->object_name;
+					if ( $control->internal && 'readonly' !== $control->type ) {
+						continue;
+					}
 
-				// Get value from $_POST
-				$value = null;
+					$field = $control->get_field();
 
-				$input_name = $control->id;
+					if ( ! $field ) {
+						continue;
+					}
 
-				if ( ! empty( $control->input_name ) ) {
-					$input_name = $control->input_name;
+					// Pass $object_name into control
+					$control->object_name = $this->object_name;
+
+					// Pass $object_name into field
+					$field->object_name = $this->object_name;
+
+					// Get value from $_POST
+					$value = null;
+
+					$input_name = $control->id;
+
+					if ( ! empty( $control->input_name ) ) {
+						$input_name = $control->input_name;
+					}
+
+					if ( ! empty( $_POST[ $input_name ] ) ) {
+						$value = $_POST[ $input_name ];
+					}
+
+					// Handle saving repeatable fields, they are always arrays of values
+					if ( $control->repeatable && null !== $value ) {
+						$value = (array) $value;
+					}
+
+					// Sanitize
+					$value = $field->sanitize( $value );
+
+					if ( is_wp_error( $value ) ) {
+						return $value;
+					}
+
+					$values[ $field->id ] = $value;
 				}
 
-				if ( ! empty( $_POST[ $input_name ] ) ) {
-					$value = $_POST[ $input_name ];
-				}
+				// Save values once validation completes
+				foreach ( $controls as $control ) {
+					if ( $control->internal && 'readonly' !== $control->type ) {
+						continue;
+					}
 
-				// Sanitize
-				$value = $field->sanitize( $value );
+					$field = $control->get_field();
 
-				if ( is_wp_error( $value ) ) {
-					return $value;
-				}
+					if ( ! $field || ! isset( $values[ $field->id ] ) ) {
+						continue;
+					}
 
-				$values[ $field->id ] = $value;
-			}
+					$value = $values[ $field->id ];
 
-			foreach ( $controls as $control ) {
-				if ( empty( $control->field ) || $control->internal ) {
-					continue;
-				}
+					// Save value
+					$success = $field->save( $value, $item_id );
 
-				$field = $control->field;
-
-				$value = $values[ $field->id ];
-
-				// Save value
-				$success = $field->save( $value );
-
-				if ( is_wp_error( $success ) ) {
-					return $success;
+					if ( is_wp_error( $success ) ) {
+						return $success;
+					}
 				}
 			}
 		}
@@ -294,6 +317,11 @@ class WP_Fields_API_Form extends WP_Fields_API_Container {
 	 */
 	protected function render() {
 
+		/**
+		 * @var $wp_fields WP_Fields_API
+		 */
+		global $wp_fields;
+
 		$form_nonce = $this->object_type . '_' . $this->id . '_' . $this->item_id;
 
 		wp_nonce_field( $form_nonce, 'wp_fields_api_fields_save' );
@@ -302,34 +330,19 @@ class WP_Fields_API_Form extends WP_Fields_API_Container {
 
 		if ( ! empty( $sections ) ) {
 			?>
-				<div class="fields-form-<?php echo esc_attr( $this->object_type ); ?> form-<?php echo esc_attr( $this->id ); ?>-wrap fields-api-form">
-					<?php
-						foreach ( $sections as $section ) {
-							// Pass $object_name into section
-							$section->object_name = $this->object_name;
+			<div class="fields-form-<?php echo esc_attr( $this->object_type ); ?> form-<?php echo esc_attr( $this->id ); ?>-wrap fields-api-form">
+				<?php
+				foreach ( $sections as $section ) {
+					// Pass $object_name into section
+					$section->object_name = $this->object_name;
 
-							$section->maybe_render();
-						}
-					?>
-				</div>
+					$section->maybe_render();
+				}
+				?>
+			</div>
 			<?php
 
-			$this->enqueue_footer_scripts();
-		}
-
-	}
-
-	/**
-	 * Add action to print footer scripts for form
-	 */
-	public function enqueue_footer_scripts() {
-
-		/**
-		 * @var $wp_fields WP_Fields_API
-		 */
-		global $wp_fields;
-
-		if ( ! has_action( 'admin_print_footer_scripts', array( $wp_fields, 'render_control_templates' ) ) ) {
+			// Render control templates
 			add_action( 'admin_print_footer_scripts', array( $wp_fields, 'render_control_templates' ), 5 );
 		}
 

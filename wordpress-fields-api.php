@@ -3,7 +3,7 @@
  * Plugin Name: Fields API
  * Plugin URI: https://github.com/sc0ttkclark/wordpress-fields-api
  * Description: WordPress Fields API prototype and proposal for WordPress core
- * Version: 0.0.6 Beta
+ * Version: 0.0.6 Alpha
  * Author: Scott Kingsley Clark
  * Author URI: http://scottkclark.com/
  * License: GPL2+
@@ -28,6 +28,7 @@ if ( defined( 'WP_FIELDS_API_TESTING' ) && WP_FIELDS_API_TESTING && ! empty( $_G
  * The absolute server path to the fields API directory.
  */
 define( 'WP_FIELDS_API_DIR', plugin_dir_path( __FILE__ ) );
+define( 'WP_FIELDS_API_URL', plugin_dir_url( __FILE__ ) );
 
 /**
  * On `plugins_loaded`, create an instance of the Fields API manager class.
@@ -110,10 +111,10 @@ function _wp_fields_api_implementations() {
 	require_once( $implementation_dir . 'settings/class-wp-fields-api-form-settings-reading.php' );
 	require_once( $implementation_dir . 'settings/class-wp-fields-api-form-settings-permalink.php' );
 
-	WP_Fields_API_Form_Settings_General::register( 'settings', 'general' );
-	WP_Fields_API_Form_Settings_Writing::register( 'settings', 'writing' );
-	WP_Fields_API_Form_Settings_Reading::register( 'settings', 'reading' );
-	WP_Fields_API_Form_Settings_Permalink::register( 'settings', 'permalink' );
+	WP_Fields_API_Form_Settings_General::register( 'settings', 'settings-general' );
+	WP_Fields_API_Form_Settings_Writing::register( 'settings', 'settings-writing' );
+	WP_Fields_API_Form_Settings_Reading::register( 'settings', 'settings-reading' );
+	WP_Fields_API_Form_Settings_Permalink::register( 'settings', 'settings-permalink' );
 
 	// Settings API compatibility
 	require_once( $implementation_dir . 'settings/class-wp-fields-api-settings-api.php' );

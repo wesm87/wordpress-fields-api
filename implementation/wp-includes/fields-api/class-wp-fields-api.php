@@ -78,6 +78,14 @@ final class WP_Fields_API {
 	protected static $registered_control_types = array();
 
 	/**
+	 * Datasources that may be used.
+	 *
+	 * @access protected
+	 * @var array
+	 */
+	protected static $registered_datasources = array();
+
+	/**
 	 * Include the library and bootstrap.
 	 *
 	 * @constructor
@@ -91,34 +99,37 @@ final class WP_Fields_API {
 		require_once( $fields_api_dir . 'class-wp-fields-api-container.php' );
 		require_once( $fields_api_dir . 'class-wp-fields-api-form.php' );
 		require_once( $fields_api_dir . 'class-wp-fields-api-section.php' );
-		require_once( $fields_api_dir . 'class-wp-fields-api-control.php' );
 		require_once( $fields_api_dir . 'class-wp-fields-api-field.php' );
+		require_once( $fields_api_dir . 'class-wp-fields-api-control.php' );
+		require_once( $fields_api_dir . 'class-wp-fields-api-datasource.php' );
 
 		// Include section types
 		require_once( $fields_api_dir . 'section-types/class-wp-fields-api-table-section.php' );
 		require_once( $fields_api_dir . 'section-types/class-wp-fields-api-meta-box-section.php' );
 
 		// Include control types
+		require_once( $fields_api_dir . 'control-types/class-wp-fields-api-readonly-control.php' );
 		require_once( $fields_api_dir . 'control-types/class-wp-fields-api-textarea-control.php' );
+		require_once( $fields_api_dir . 'control-types/class-wp-fields-api-wysiwyg-control.php' );
 		require_once( $fields_api_dir . 'control-types/class-wp-fields-api-checkbox-control.php' );
 		require_once( $fields_api_dir . 'control-types/class-wp-fields-api-multi-checkbox-control.php' );
 		require_once( $fields_api_dir . 'control-types/class-wp-fields-api-radio-control.php' );
 		//require_once( $fields_api_dir . 'control-types/class-wp-fields-api-radio-multi-label-control.php' ); // @todo Revisit
 		require_once( $fields_api_dir . 'control-types/class-wp-fields-api-select-control.php' );
-		require_once( $fields_api_dir . 'control-types/class-wp-fields-api-dropdown-pages-control.php' );
-		require_once( $fields_api_dir . 'control-types/class-wp-fields-api-dropdown-terms-control.php' );
-		require_once( $fields_api_dir . 'control-types/class-wp-fields-api-dropdown-post-format-control.php' );
 		require_once( $fields_api_dir . 'control-types/class-wp-fields-api-color-control.php' );
 		require_once( $fields_api_dir . 'control-types/class-wp-fields-api-media-control.php' );
 		require_once( $fields_api_dir . 'control-types/class-wp-fields-api-media-file-control.php' );
 		require_once( $fields_api_dir . 'control-types/class-wp-fields-api-number-inline-description.php' );
 
+		// Include datasources
+		require_once( $fields_api_dir . 'datasources/class-wp-fields-api-comment-datasource.php' );
+		require_once( $fields_api_dir . 'datasources/class-wp-fields-api-post-datasource.php' );
+		require_once( $fields_api_dir . 'datasources/class-wp-fields-api-page-datasource.php' );
+		require_once( $fields_api_dir . 'datasources/class-wp-fields-api-term-datasource.php' );
+		require_once( $fields_api_dir . 'datasources/class-wp-fields-api-user-datasource.php' );
+
 		// Register our wp_loaded() first before WP_Customize_Manage::wp_loaded()
 		add_action( 'wp_loaded', array( $this, 'wp_loaded' ), 9 );
-
-		add_action( 'fields_register', array( $this, 'register_defaults' ) );
-
-		add_action( 'fields_print_footer_scripts', array( $this, 'render_control_templates' ), 1 );
 
 	}
 
@@ -145,6 +156,9 @@ final class WP_Fields_API {
 	 * @access public
 	 */
 	public function wp_loaded() {
+
+		// Register default controls
+		$this->register_defaults();
 
 		/**
 		 * Fires when the Fields API is available, and components can be registered.
@@ -635,9 +649,7 @@ final class WP_Fields_API {
 				$controls = array( $controls );
 			}
 
-			foreach ( $controls as $control ) {
-				$control_id = null;
-
+			foreach ( $controls as $control_id => $control ) {
 				if ( is_a( $control, 'WP_Fields_API_Section' ) ) {
 					$control->section = $id;
 
@@ -645,7 +657,12 @@ final class WP_Fields_API {
 				} elseif ( is_array( $control ) ) {
 					$control['section'] = $id;
 
-					$control_id = $control['id'];
+					if ( ! empty( $control['id'] ) ) {
+						$control_id = $control['id'];
+					}
+				} else {
+					// Invalid control
+					$control_id = null;
 				}
 
 				if ( $control_id ) {
@@ -1284,7 +1301,7 @@ final class WP_Fields_API {
 			return new WP_Error( '', __( 'ID is required.', 'fields-api' ) );
 		}
 
-		$field = array();
+		$field = false;
 
 		if ( is_a( $id, 'WP_Fields_API_Control' ) ) {
 			$control = $id;
@@ -1294,26 +1311,27 @@ final class WP_Fields_API {
 			// Save for late init
 			$control = $args;
 
-			if ( isset( $control['field'] ) && ( is_a( $control['field'], 'WP_Fields_API_Field' ) || is_array( $control['field'] ) ) ) {
-				$field = $control['field'];
+			// Add a field automatically for every control unless it's referencing another field already
+			if ( ! isset( $control['field'] ) || ( is_a( $control['field'], 'WP_Fields_API_Field' ) || is_array( $control['field'] ) ) ) {
+				$field = null;
 
-				if ( is_a( $control['field'], 'WP_Fields_API_Field' ) ) {
-					$control['field'] = $control['field']->id;
-				} elseif ( is_array( $control['field'] ) ) {
-					if ( ! empty( $control['field']['id'] ) ) {
-						$control['field'] = $control['field']['id'];
-					} else {
-						$field['id'] = $id;
+				if ( isset( $control['field'] ) ) {
+					$field = $control['field'];
+				}
 
-						$control['field'] = $id;
-					}
+				if ( is_a( $field, 'WP_Fields_API_Field' ) ) {
+					/**
+					 * @var $field WP_Fields_API_Field
+					 */
+					$control['field'] = $field->id;
+				} elseif ( ! empty( $field['id'] ) ) {
+					$control['field'] = $field['id'];
 				} else {
-					$field = array(
-						'id' => $id,
-					);
+					$control['field'] = $id;
 
-					// Remove from control args
-					unset( $control['field'] );
+					if ( ! is_array( $field ) ) {
+						$field = array();
+					}
 				}
 			}
 		}
@@ -1342,17 +1360,16 @@ final class WP_Fields_API {
 		self::$controls[ $object_type ][ $object_name ][ $id ] = $control;
 
 		// Field handling
-		if ( ! empty( $field ) ) {
-			// Generate Field ID if not set
-			if ( empty( $field['id'] ) ) {
-				$field['id'] = $id;
+		if ( is_array( $field ) ) {
+			$field_id = $id;
+
+			if ( ! empty( $field['id'] ) ) {
+				// Get Field ID
+				$field_id = $field['id'];
+
+				// Field ID from field args
+				unset( $field['id'] );
 			}
-
-			// Get Field ID
-			$field_id = $field['id'];
-
-			// Field ID from field args
-			unset( $field['id'] );
 
 			// Add field for control
 			$this->add_field( $object_type, $field_id, $object_name, $field );
@@ -1437,7 +1454,6 @@ final class WP_Fields_API {
 			 * @var $control WP_Fields_API_Control
 			 */
 			$control = new $control_class( $object_type, $id, $args );
-
 		}
 
 		if ( $control ) {
@@ -1513,6 +1529,13 @@ final class WP_Fields_API {
 	 */
 	public function render_control_templates() {
 
+		static $rendered;
+
+		// Only render once
+		if ( ! empty( $rendered ) ) {
+			return;
+		}
+
 		/**
 		 * @var $control WP_Fields_API_Control
 		 */
@@ -1521,6 +1544,69 @@ final class WP_Fields_API {
 
 			$control->print_template();
 		}
+
+		$rendered = true;
+
+	}
+
+	/**
+	 * Setup the datasource.
+	 *
+	 * @access public
+	 *
+	 * @param string $type Datasource type.
+	 * @param array  $args Datasource arguments.
+	 *
+	 * @return WP_Fields_API_Control|null $control The control object.
+	 */
+	public function setup_datasource( $type, $args = null ) {
+
+		$datasource = null;
+
+		$datasource_class = 'WP_Fields_API_Datasource';
+
+		if ( is_a( $args, $datasource_class ) ) {
+			$datasource = $args;
+		} else {
+			if ( is_array( $args ) && ! empty( $args['type'] ) ) {
+				$type = $args['type'];
+
+				unset( $args['type'] );
+			}
+
+			if ( ! empty( self::$registered_datasources[ $type ] ) ) {
+				$datasource_class = self::$registered_datasources[ $type ];
+			} elseif ( in_array( $type, self::$registered_datasources ) ) {
+				$datasource_class = $type;
+			}
+
+			/**
+			 * @var $datasource WP_Fields_API_Datasource
+			 */
+			$datasource = new $datasource_class( $type, $args );
+		}
+
+		return $datasource;
+
+	}
+
+	/**
+	 * Register a datasource type.
+	 *
+	 * @access public
+	 *
+	 * @see    WP_Fields_API_Datasource
+	 *
+	 * @param string $type             Datasource type ID.
+	 * @param string $datasource_class Name of a custom datasource which is a subclass of WP_Fields_API_Datasource.
+	 */
+	public function register_datasource( $type, $datasource_class = null ) {
+
+		if ( null === $datasource_class ) {
+			$datasource_class = $type;
+		}
+
+		self::$registered_datasources[ $type ] = $datasource_class;
 
 	}
 
@@ -1605,19 +1691,32 @@ final class WP_Fields_API {
 		$this->register_control_type( 'number', 'WP_Fields_API_Control' );
 		$this->register_control_type( 'email', 'WP_Fields_API_Control' );
 		$this->register_control_type( 'password', 'WP_Fields_API_Control' );
+		$this->register_control_type( 'hidden', 'WP_Fields_API_Control' );
+		$this->register_control_type( 'readonly', 'WP_Fields_API_Readonly_Control' );
 		$this->register_control_type( 'textarea', 'WP_Fields_API_Textarea_Control' );
+		$this->register_control_type( 'wysiwyg', 'WP_Fields_API_WYSIWYG_Control' );
 		$this->register_control_type( 'checkbox', 'WP_Fields_API_Checkbox_Control' );
 		$this->register_control_type( 'multi-checkbox', 'WP_Fields_API_Multi_Checkbox_Control' );
 		$this->register_control_type( 'radio', 'WP_Fields_API_Radio_Control' );
 		//$this->register_control_type( 'radio-multi-label', 'WP_Fields_API_Radio_Multi_Label_Control' ); // @todo Revisit
 		$this->register_control_type( 'select', 'WP_Fields_API_Select_Control' );
-		$this->register_control_type( 'dropdown-pages', 'WP_Fields_API_Dropdown_Pages_Control' );
-		$this->register_control_type( 'dropdown-terms', 'WP_Fields_API_Dropdown_Terms_Control' );
-		$this->register_control_type( 'dropdown-post-format', 'WP_Fields_API_Dropdown_Post_Format_Control' );
 		$this->register_control_type( 'color', 'WP_Fields_API_Color_Control' );
 		$this->register_control_type( 'media', 'WP_Fields_API_Media_Control' );
 		$this->register_control_type( 'media-file', 'WP_Fields_API_Media_File_Control' );
 		$this->register_control_type( 'number-inline-desc', 'WP_Fields_API_Number_Inline_Description_Control' ); // @todo Revisit
+
+		/* Datasources */
+		$this->register_datasource( 'post-format', 'WP_Fields_API_Datasource' );
+		$this->register_datasource( 'post-type', 'WP_Fields_API_Datasource' );
+		$this->register_datasource( 'post-status', 'WP_Fields_API_Datasource' );
+		$this->register_datasource( 'page-status', 'WP_Fields_API_Datasource' );
+		$this->register_datasource( 'user-role', 'WP_Fields_API_Datasource' );
+		$this->register_datasource( 'admin-color-scheme', 'WP_Fields_API_Admin_Color_Scheme_Datasource' );
+		$this->register_datasource( 'comment', 'WP_Fields_API_Comment_Datasource' );
+		$this->register_datasource( 'post', 'WP_Fields_API_Post_Datasource' );
+		$this->register_datasource( 'page', 'WP_Fields_API_Page_Datasource' );
+		$this->register_datasource( 'term', 'WP_Fields_API_Term_Datasource' );
+		$this->register_datasource( 'user', 'WP_Fields_API_User_Datasource' );
 
 		/**
 		 * Fires once WordPress has loaded, allowing control types to be registered.

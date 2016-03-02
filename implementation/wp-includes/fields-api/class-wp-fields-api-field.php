@@ -17,6 +17,13 @@ class WP_Fields_API_Field extends WP_Fields_API_Container {
 	public $default = '';
 
 	/**
+	 * Whether to store arrays of meta values separately or as one serialized.
+	 *
+	 * @var bool
+	 */
+	public $store_arrays_separately = false;
+
+	/**
 	 * Server-side sanitization callback for the field's value.
 	 *
 	 * @var callback
@@ -158,12 +165,13 @@ class WP_Fields_API_Field extends WP_Fields_API_Container {
 	 * Check user capabilities and theme supports, and then save
 	 * the value of the field.
 	 *
-	 * @param mixed    $value   The value to save.
-	 * @param int|null $item_id The Item ID.
+	 * @param mixed    $value    The value to save.
+	 * @param int|null $item_id  The Item ID.
+	 * @param boolean  $sanitize Sanitize value before saving
 	 *
 	 * @return false|mixed False if cap check fails or value isn't set.
 	 */
-	public function save( $value, $item_id = null ) {
+	public function save( $value, $item_id = null, $sanitize = false ) {
 
 		if ( null === $item_id ) {
 			$item_id = $this->get_item_id();
@@ -173,7 +181,13 @@ class WP_Fields_API_Field extends WP_Fields_API_Container {
 			return false;
 		}
 
-		$value = $this->sanitize( $value );
+		if ( $sanitize ) {
+			$value = $this->sanitize( $value );
+
+			if ( is_wp_error( $value ) ) {
+				return $value;
+			}
+		}
 
 		/**
 		 * Fires when the WP_Fields_API_Field::save() method is called.
@@ -342,17 +356,18 @@ class WP_Fields_API_Field extends WP_Fields_API_Container {
 			delete_metadata( $meta_type, $item_id, $this->id_data['base'] );
 		}
 
-		// Handle non-array option.
+		// Handle non-array field.
 		if ( empty( $this->id_data['keys'] ) ) {
+			// @todo Handle $this->store_arrays_separately
 			return update_metadata( $meta_type, $item_id, $this->id_data['base'], $value );
 		}
 
-		// Handle array-based keys.
-		$keys = get_metadata( $meta_type, 0, $this->id_data['base'] );
-		$keys = $this->multidimensional_replace( $keys, $this->id_data['keys'], $value );
+		// Handle array-based field.
+		$values = get_metadata( $meta_type, $item_id, $this->id_data['base'] );
+		$values = $this->multidimensional_replace( $values, $this->id_data['keys'], $value );
 
-		if ( isset( $keys ) ) {
-			return update_metadata( $meta_type, $item_id, $this->id_data['base'], $keys );
+		if ( isset( $values ) ) {
+			return update_metadata( $meta_type, $item_id, $this->id_data['base'], $values );
 		}
 
 		return null;

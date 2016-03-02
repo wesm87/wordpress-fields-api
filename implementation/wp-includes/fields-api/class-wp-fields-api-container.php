@@ -249,7 +249,11 @@ class WP_Fields_API_Container {
 		}
 
 		foreach ( $args as $property => $value ) {
-			$this->{$property} = $value;
+			if ( isset( $this->{$property} ) && is_array( $this->{$property} ) ) {
+				$this->{$property} = array_merge( $this->{$property}, $value );
+			} else {
+				$this->{$property} = $value;
+			}
 		}
 
 		self::$instance_count += 1;
@@ -825,15 +829,6 @@ class WP_Fields_API_Container {
 	}
 
 	/**
-	 * Enqueue scripts/styles as needed.
-	 */
-	public function enqueue() {
-
-		// Default is to do nothing
-
-	}
-
-	/**
 	 * Get the container contents.
 	 *
 	 * @return string Contents of the container.
@@ -869,6 +864,11 @@ class WP_Fields_API_Container {
 
 		if ( ! $this->check_capabilities() ) {
 			return;
+		}
+
+		// Enqueue assets
+		if ( method_exists( $this, 'enqueue' ) && ! has_action( 'admin_footer', array( $this, 'enqueue' ) ) ) {
+			add_action( 'admin_footer', array( $this, 'enqueue' ) );
 		}
 
 		/**
