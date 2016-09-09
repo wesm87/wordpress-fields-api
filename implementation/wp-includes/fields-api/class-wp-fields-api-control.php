@@ -15,14 +15,6 @@ class WP_Fields_API_Control extends WP_Fields_API_Container {
 	protected $container_type = 'control';
 
 	/**
-	 * Override default Input name, defaults to $this->id.
-	 *
-	 * @access public
-	 * @var string
-	 */
-	public $input_name;
-
-	/**
 	 * Item ID of current item passed to WP_Fields_API_Field for value()
 	 *
 	 * @access public
@@ -89,6 +81,18 @@ class WP_Fields_API_Control extends WP_Fields_API_Container {
 	 *               It returns an array of choices for the control to use.
 	 */
 	public $choices_callback = null;
+
+	/**
+	 * Render callback
+	 *
+	 * @access public
+	 *
+	 * @see WP_Fields_API_Control::render_content()
+	 *
+	 * @var callable Callback is called with one argument, the instance of WP_Fields_API_Control.
+	 *               It outputs an input for the control to use.
+	 */
+	public $render_callback = null;
 
 	/**
 	 * List of control types that have had their templates printed to screen
@@ -221,13 +225,17 @@ class WP_Fields_API_Control extends WP_Fields_API_Container {
 		$field = null;
 
 		if ( ! $fields && $this->field ) {
-			$field = $wp_fields->get_field( $this->object_type, $this->field, $this->object_name );
+			$field = $wp_fields->get_field( $this->object_type, $this->field, $this->object_subtype );
 
 			if ( $field ) {
 				$this->add_child( $field, 'field' );
 			}
 		} elseif ( $fields ) {
-			$field = current( $fields );
+			$fields = $this->setup_children( $fields, 'field' );
+
+			if ( $fields ) {
+				$field = current( $fields );
+			}
 		}
 
 		return $field;
@@ -257,18 +265,15 @@ class WP_Fields_API_Control extends WP_Fields_API_Container {
 			$id = $this->id;
 		}
 
-		$added = $wp_fields->add_field( $this->object_type, $id, $this->object_name, $args );
+		$added = $wp_fields->add_field( $this->object_type, $id, $this->object_subtype, $args );
 
 		if ( $added && ! is_wp_error( $added ) ) {
-			// Get and setup field
-			$field = $wp_fields->get_field( $this->object_type, $id, $this->object_name );
-
-			if ( $field && ! is_wp_error( $field ) ) {
-				$this->add_child( $field, 'field' );
+			if ( $id && ! is_wp_error( $id ) ) {
+				$this->add_child( $id, 'field' );
 
 				return true;
 			} else {
-				return $field;
+				return $id;
 			}
 		}
 
@@ -288,8 +293,16 @@ class WP_Fields_API_Control extends WP_Fields_API_Container {
 			// Get datasource
 			$datasource = $this->get_datasource();
 
+			$args = array();
+
+			// @todo Needs hook docs
+			$args = apply_filters( "fields_control_datasource_get_args_{$datasource->type}", $args, $datasource, $this );
+
+			// @todo Needs hook docs
+			$args = apply_filters( "fields_control_datasource_get_args_{$datasource->type}_{$this->id}", $args, $datasource, $this );
+
 			// Get data from datasource
-			$data = $datasource->get_data( array(), $this );
+			$data = $datasource->get_data( $args, $this );
 		}
 
 		return $data;
@@ -443,6 +456,11 @@ class WP_Fields_API_Control extends WP_Fields_API_Container {
 	 */
 	protected function render_content() {
 
+		if ( is_callable( $this->render_callback ) ) {
+			call_user_func( $this->render_callback, $this );
+
+			return;
+		}
 		?>
 		<input type="<?php echo esc_attr( $this->type ); ?>" <?php $this->input_attrs(); ?> value="<?php echo esc_attr( $this->value() ); ?>" <?php $this->link(); ?> />
 		<?php
@@ -462,7 +480,7 @@ class WP_Fields_API_Control extends WP_Fields_API_Container {
 			return '';
 		}
 
-		return 'data-fields-field-link="' . esc_attr( $field->id ) . '"';
+		return ' data-fields-field-link="' . esc_attr( $field->id ) . '"';
 
 	}
 
@@ -489,13 +507,7 @@ class WP_Fields_API_Control extends WP_Fields_API_Container {
 		}
 
 		if ( ! isset( $this->input_attrs['name'] ) ) {
-			$input_name = $this->id;
-
-			if ( ! empty( $this->input_name ) ) {
-				$input_name = $this->input_name;
-			}
-
-			$this->input_attrs['name'] = $input_name;
+			$this->input_attrs['name'] = $this->id;
 		}
 
 		if ( $this->repeatable && false === strpos( $this->input_attrs['name'], '[' ) ) {
@@ -616,6 +628,8 @@ class WP_Fields_API_Control extends WP_Fields_API_Container {
 	 */
 	public function &__get( $name ) {
 
+		$null = null;
+
 		// Map $this->choices to $this->choices() for dynamic choice handling
 		if ( 'choices' == $name ) {
 			$this->setup_choices();
@@ -623,7 +637,7 @@ class WP_Fields_API_Control extends WP_Fields_API_Container {
 			return $this->{$name};
 		}
 
-		return null;// $this->{$name}; @todo Change this back when we're done testing
+		return $null;
 
 	}
 
